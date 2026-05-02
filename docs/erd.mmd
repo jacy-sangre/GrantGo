@@ -1,0 +1,9 @@
+erDiagram
+    profiles }o--|| regions : belongs_to
+    scholarships }o--|| providers : offered_by
+    scholarship_regions }o--|| scholarships : maps
+    scholarship_regions }o--|| regions : targets
+    scholarship_categories }o--|| scholarships : maps
+    scholarship_categories }o--|| categories : tags
+    bookmarks }o--|| profiles : saved_by
+    bookmarks }o--|| scholarships : saves

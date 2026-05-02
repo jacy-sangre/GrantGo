@@ -1,0 +1,59 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Syne:wght@600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-family: 'Geist', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  
+  /* Modern vibrant color palette */
+  --gradient-primary: linear-gradient(135deg, #ff006e 0%, #8338ec 50%, #3a86ff 100%);
+  --gradient-secondary: linear-gradient(135deg, #06ffa5 0%, #3a86ff 100%);
+  --color-brand: #ff006e;
+  --color-accent: #06ffa5;
+  --color-purple: #8338ec;
+  --color-blue: #3a86ff;
+}
+
+body {
+  @apply bg-gradient-to-br from-slate-50 via-purple-50/30 to-blue-50/20 text-slate-900 antialiased;
+  background-attachment: fixed;
+}
+
+/* Bold section headers */
+h1, h2, h3 {
+  @apply font-['Syne'];
+}
+
+h1 {
+  @apply text-4xl sm:text-6xl font-bold tracking-tight;
+}
+
+h2 {
+  @apply text-3xl sm:text-5xl font-bold;
+}
+
+/* Smooth transitions */
+* {
+  @apply transition-colors duration-200;
+}
+
+/* Selection styling */
+::selection {
+  @apply bg-brand text-white;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  @apply w-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-purple-400 rounded-full hover:bg-purple-500;
+}

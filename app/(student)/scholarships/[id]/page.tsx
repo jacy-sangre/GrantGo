@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 
@@ -24,7 +25,6 @@ type ScholarshipDetail = {
 };
 
 const defaultRequirementState = {
-  onlineFormCompleted: false,
   validId: false,
   birthCertificate: false,
   transcript: false,
@@ -34,7 +34,6 @@ const defaultRequirementState = {
 };
 
 const REQUIRED_FIELDS = [
-  { key: "onlineFormCompleted", label: "Application form completed online" },
   { key: "validId", label: "Government-issued ID or valid student ID" },
   { key: "birthCertificate", label: "Birth certificate or proof of identity" },
   { key: "transcript", label: "Latest transcript or report card" },
@@ -63,7 +62,20 @@ export default function ScholarshipDetailPage() {
   const [messageType, setMessageType] = useState<"info" | "error" | "success">("info");
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
+  const [confirmationAction, setConfirmationAction] = useState<"delete" | "saveDraft" | "submit" | null>(null);
+
+  // Ref to prevent concurrent/duplicate saves
+  const savingDraftRef = useRef(false);
+  // Ref to always access latest applicationId inside async callbacks without stale closures
+  const applicationIdRef = useRef<string | null>(null);
+
   const supabase = createClient();
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    applicationIdRef.current = applicationId;
+  }, [applicationId]);
 
   useEffect(() => {
     let mounted = true;
@@ -104,15 +116,19 @@ export default function ScholarshipDetailPage() {
       ]);
 
       if (!mounted) return;
+
       if (scholarshipRes.error || !scholarshipRes.data) {
         setActionMessage("Scholarship not found or access denied.");
       } else {
         setScholarship(scholarshipRes.data);
       }
+
       setIsSaved(!!bookmarkRes.data);
 
       if (applicationRes.data) {
-        setApplicationId(applicationRes.data.id);
+        const appId = applicationRes.data.id;
+        setApplicationId(appId);
+        applicationIdRef.current = appId;
         setApplicationStatus(applicationRes.data.status ?? "draft");
         setShowApplicationForm(applicationRes.data.status === "draft");
         setRequirementChecks({
@@ -125,6 +141,18 @@ export default function ScholarshipDetailPage() {
         setApplicantPhone(applicationRes.data.applicant_info?.phone ?? "");
         setApplicantAddress(applicationRes.data.applicant_info?.address ?? "");
         setUploadedFiles(applicationRes.data.uploaded_files ?? []);
+      } else {
+        const { data: profileData } = await supabase
+          .from("profiles")
+          .select("first_name, last_name, email")
+          .eq("id", userId)
+          .single();
+
+        if (profileData && mounted) {
+          const fullName = [profileData.first_name, profileData.last_name].filter(Boolean).join(" ");
+          setApplicantFullName(fullName);
+          setApplicantEmail(profileData.email ?? "");
+        }
       }
 
       setLoading(false);
@@ -134,7 +162,7 @@ export default function ScholarshipDetailPage() {
     return () => {
       mounted = false;
     };
-  }, [params?.id, router, supabase]);
+  }, [params?.id]);
 
   const toggleSave = async () => {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -152,14 +180,12 @@ export default function ScholarshipDetailPage() {
         .delete()
         .eq("user_id", userId)
         .eq("scholarship_id", scholarship.id);
-      if (!error) {
-        setIsSaved(false);
-      }
+      if (!error) setIsSaved(false);
     } else {
-      const { error } = await supabase.from("bookmarks").insert({ user_id: userId, scholarship_id: scholarship.id });
-      if (!error) {
-        setIsSaved(true);
-      }
+      const { error } = await supabase
+        .from("bookmarks")
+        .insert({ user_id: userId, scholarship_id: scholarship.id });
+      if (!error) setIsSaved(true);
     }
     setSaving(false);
   };
@@ -168,100 +194,15 @@ export default function ScholarshipDetailPage() {
     if (!scholarship) return;
     setShowApplicationForm(true);
     setActionMessage("Review the application requirements and save a draft if you need more time.");
+    setMessageType("info");
   };
 
-  const hasDraftData = applicationNotes.trim().length > 0 || Object.values(requirementChecks).some(Boolean);
+  const hasDraftData =
+    applicationNotes.trim().length > 0 || Object.values(requirementChecks).some(Boolean);
 
   const setMessage = (text: string, type: "info" | "error" | "success" = "info") => {
     setActionMessage(text);
     setMessageType(type);
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, requirementKey?: string) => {
-    const files = e.currentTarget.files;
-    if (!files || !applicationId) {
-      setMessage("Please start or load an application first.", "error");
-      return;
-    }
-
-    const file = files[0];
-    if (!file) return;
-
-    // Validate file size (10MB max)
-    if (file.size > 10 * 1024 * 1024) {
-      setMessage("File is too large. Maximum size is 10MB.", "error");
-      return;
-    }
-
-    // Validate file type
-    const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-    if (!allowedTypes.includes(file.type)) {
-      setMessage("File type not allowed. Please upload PDF, JPEG, PNG, or Word documents.", "error");
-      return;
-    }
-
-    try {
-      setSaving(true);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData?.session?.user?.id;
-      if (!userId) return;
-
-      // Upload file to Supabase Storage
-      const filePath = `${userId}/${applicationId}/${Date.now()}_${file.name}`;
-      const { error: uploadError } = await supabase.storage.from("application-documents").upload(filePath, file, {
-        cacheControl: "3600",
-        upsert: false
-      });
-
-      if (uploadError) {
-        setMessage("Failed to upload file. Please try again.", "error");
-        setSaving(false);
-        return;
-      }
-
-      // Add file to uploaded files list
-      const newFile = {
-        name: file.name,
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
-        storagePath: filePath,
-        requirementKey: requirementKey
-      };
-
-      setUploadedFiles((prev) => [...prev, newFile]);
-      setMessage(`✓ ${file.name} uploaded successfully.`, "success");
-    } catch (error) {
-      setMessage("Error uploading file. Please try again.", "error");
-    } finally {
-      setSaving(false);
-      e.currentTarget.value = "";
-    }
-  };
-
-  const removeUploadedFile = (idx: number) => {
-    setUploadedFiles((prev) => prev.filter((_, i) => i !== idx));
-    setMessage("File removed.", "success");
-  };
-
-  const handleDeleteApplication = async () => {
-    if (!applicationId) return;
-
-    if (!window.confirm("Are you sure you want to delete this application? This action cannot be undone.")) {
-      return;
-    }
-
-    setSubmitting(true);
-    const { error } = await supabase.from("applications").delete().eq("id", applicationId);
-
-    setSubmitting(false);
-    if (error) {
-      setMessage("Unable to delete application. Please try again.", "error");
-    } else {
-      setMessage("✓ Application deleted successfully. Redirecting...", "success");
-      setTimeout(() => {
-        router.push("/scholarships");
-      }, 1500);
-    }
   };
 
   const validateApplicantInfo = (): boolean => {
@@ -284,90 +225,251 @@ export default function ScholarshipDetailPage() {
     return true;
   };
 
-  const saveDraft = async (showMessage = true, skipValidation = false) => {
-    // Validate: must have at least something filled in
+  /**
+   * Core save function. Returns the applicationId (new or existing) on success, null on error.
+   * Uses a ref-lock to prevent concurrent duplicate inserts.
+   */
+  const saveDraftCore = async (
+    opts: {
+      showMessage?: boolean;
+      skipValidation?: boolean;
+      // Pass current field values explicitly so autosave closures don't go stale
+      notes?: string;
+      checks?: typeof defaultRequirementState;
+      files?: typeof uploadedFiles;
+      fullName?: string;
+      email?: string;
+      phone?: string;
+      address?: string;
+    } = {}
+  ): Promise<string | null> => {
+    if (savingDraftRef.current) return applicationIdRef.current;
+    savingDraftRef.current = true;
+
+    const {
+      showMessage = true,
+      skipValidation = false,
+      notes = applicationNotes,
+      checks = requirementChecks,
+      files = uploadedFiles,
+      fullName = applicantFullName,
+      email = applicantEmail,
+      phone = applicantPhone,
+      address = applicantAddress
+    } = opts;
+
     if (!skipValidation && !hasDraftData) {
       setMessage("Please fill in at least one requirement or add notes before saving.", "error");
-      return true; // return error
+      savingDraftRef.current = false;
+      return null;
     }
 
-    // Validate applicant info
-    if (!validateApplicantInfo()) {
-      return true;
+    if (!skipValidation && !validateApplicantInfo()) {
+      savingDraftRef.current = false;
+      return null;
     }
 
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData?.session?.user?.id;
     if (!userId || !scholarship) {
-      return true;
+      savingDraftRef.current = false;
+      return null;
     }
 
     const payload = {
       user_id: userId,
       scholarship_id: scholarship.id,
       status: "draft",
-      application_data: { notes: applicationNotes },
-      applicant_info: {
-        fullName: applicantFullName,
-        email: applicantEmail,
-        phone: applicantPhone,
-        address: applicantAddress
-      },
-      requirements: requirementChecks,
-      uploaded_files: uploadedFiles,
+      application_data: { notes },
+      applicant_info: { fullName: fullName, email, phone, address },
+      requirements: checks,
+      uploaded_files: files,
       applied_at: new Date().toISOString()
     };
 
     let error = null;
-    if (applicationId) {
-      const updateRes = await supabase.from("applications").update(payload).eq("id", applicationId);
+    let resolvedId = applicationIdRef.current;
+
+    if (resolvedId) {
+      const updateRes = await supabase
+        .from("applications")
+        .update(payload)
+        .eq("id", resolvedId);
       error = updateRes.error;
     } else {
-      const insertRes = await supabase.from("applications").insert(payload).select("id");
+      const insertRes = await supabase
+        .from("applications")
+        .insert(payload)
+        .select("id");
       error = insertRes.error;
-      if (!error && Array.isArray(insertRes.data) && insertRes.data[0]?.id) {
-        setApplicationId(insertRes.data[0].id as string);
+      if (!error && insertRes.data?.[0]?.id) {
+        resolvedId = insertRes.data[0].id as string;
+        setApplicationId(resolvedId);
+        applicationIdRef.current = resolvedId;
       }
     }
 
     setApplicationStatus("draft");
+
     if (showMessage) {
       if (error) {
         setMessage("Unable to save your application draft. Please try again.", "error");
       } else {
-        setMessage("✓ Application draft saved successfully. You can continue editing or submit anytime.", "success");
+        setMessage(
+          "✓ Application draft saved successfully. You can continue editing or submit anytime.",
+          "success"
+        );
       }
     }
 
-    return error;
+    savingDraftRef.current = false;
+    return error ? null : resolvedId;
   };
 
-  const handleSaveDraft = async () => {
-    // Show confirmation dialog
-    if (!window.confirm("Save this application as a draft? You can continue editing it later from your Applications page.")) {
-      return;
-    }
-
-    setSubmitting(true);
-    await saveDraft(true);
-    setSubmitting(false);
-  };
-
+  // Autosave — passes current values explicitly to avoid stale closure issues
   useEffect(() => {
-    if (!showApplicationForm || !hasDraftData) {
-      return;
-    }
+    if (!showApplicationForm || !hasDraftData) return;
 
     const timeout = window.setTimeout(() => {
-      saveDraft(false, true); // silent autosave, skip validation
+      saveDraftCore({
+        showMessage: false,
+        skipValidation: true,
+        notes: applicationNotes,
+        checks: requirementChecks,
+        files: uploadedFiles,
+        fullName: applicantFullName,
+        email: applicantEmail,
+        phone: applicantPhone,
+        address: applicantAddress
+      });
     }, 1200);
 
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [requirementChecks, applicationNotes, showApplicationForm]);
+    return () => window.clearTimeout(timeout);
+  }, [
+    requirementChecks,
+    applicationNotes,
+    applicantFullName,
+    applicantEmail,
+    applicantPhone,
+    applicantAddress,
+    uploadedFiles,
+    showApplicationForm
+  ]);
 
-  const handleSubmitApplication = async () => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    requirementKey?: string
+  ) => {
+    const files = e.currentTarget.files;
+    if (!files) return;
+
+    const file = files[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      setMessage("File is too large. Maximum size is 10MB.", "error");
+      return;
+    }
+
+    const allowedTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ];
+    if (!allowedTypes.includes(file.type)) {
+      setMessage(
+        "File type not allowed. Please upload PDF, JPEG, PNG, or Word documents.",
+        "error"
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData?.session?.user?.id;
+      if (!userId) return;
+
+      // If no applicationId yet, create a draft first so we have a stable ID for the storage path
+      let currentAppId = applicationIdRef.current;
+      if (!currentAppId) {
+        currentAppId = await saveDraftCore({ showMessage: false, skipValidation: true });
+        if (!currentAppId) {
+          setMessage("Could not create application record. Please try again.", "error");
+          setSaving(false);
+          return;
+        }
+      }
+
+      const filePath = `${userId}/${currentAppId}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from("application-documents")
+        .upload(filePath, file, { cacheControl: "3600", upsert: false });
+
+      if (uploadError) {
+        setMessage("Failed to upload file. Please try again.", "error");
+        setSaving(false);
+        return;
+      }
+
+      const newFile = {
+        name: file.name,
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        storagePath: filePath,
+        requirementKey
+      };
+
+      setUploadedFiles((prev) => [...prev, newFile]);
+      setMessage(`✓ ${file.name} uploaded successfully.`, "success");
+    } catch {
+      setMessage("Error uploading file. Please try again.", "error");
+    } finally {
+      setSaving(false);
+      e.currentTarget.value = "";
+    }
+  };
+
+  const removeUploadedFile = (idx: number) => {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== idx));
+    setMessage("File removed.", "success");
+  };
+
+  const performDeleteApplication = async () => {
+    const currentId = applicationIdRef.current;
+    if (!currentId) return;
+
+    setIsConfirmationOpen(false);
+    setConfirmationAction(null);
+    setSubmitting(true);
+
+    const { error } = await supabase.from("applications").delete().eq("id", currentId);
+
+    setSubmitting(false);
+    if (error) {
+      setMessage("Unable to delete application. Please try again.", "error");
+    } else {
+      setMessage("✓ Application deleted successfully. Redirecting...", "success");
+      setTimeout(() => {
+        router.push("/applied");
+      }, 1500);
+    }
+  };
+
+  const handleSaveDraft = () => {
+    setConfirmationAction("saveDraft");
+    setIsConfirmationOpen(true);
+  };
+
+  const handleSubmitApplication = () => {
+    setConfirmationAction("submit");
+    setIsConfirmationOpen(true);
+  };
+
+  const performSubmitApplication = async () => {
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData?.session?.user?.id;
     if (!userId) {
@@ -377,25 +479,22 @@ export default function ScholarshipDetailPage() {
 
     if (!scholarship) return;
 
-    // Validate applicant info
-    if (!validateApplicantInfo()) {
-      return;
-    }
+    if (!validateApplicantInfo()) return;
 
-    // Validate: all fields must be checked
     const allChecked = Object.values(requirementChecks).every(Boolean);
     if (!allChecked) {
-      const uncheckedCount = Object.values(requirementChecks).filter(v => !v).length;
-      setMessage(`Please check all ${uncheckedCount} remaining requirement(s) before submitting.`, "error");
+      const uncheckedCount = Object.values(requirementChecks).filter((v) => !v).length;
+      setMessage(
+        `Please check all ${uncheckedCount} remaining requirement(s) before submitting.`,
+        "error"
+      );
       return;
     }
 
-    // Show confirmation dialog
-    if (!window.confirm("Submit your application? Once submitted, you will not be able to edit it. It will appear under your Applications page.")) {
-      return;
-    }
-
+    setIsConfirmationOpen(false);
+    setConfirmationAction(null);
     setSubmitting(true);
+
     const payload = {
       user_id: userId,
       scholarship_id: scholarship.id,
@@ -413,14 +512,24 @@ export default function ScholarshipDetailPage() {
     };
 
     let error = null;
-    if (applicationId) {
-      const updateRes = await supabase.from("applications").update(payload).eq("id", applicationId);
+    const currentId = applicationIdRef.current;
+
+    if (currentId) {
+      const updateRes = await supabase
+        .from("applications")
+        .update(payload)
+        .eq("id", currentId);
       error = updateRes.error;
     } else {
-      const insertRes = await supabase.from("applications").insert(payload).select("id");
+      const insertRes = await supabase
+        .from("applications")
+        .insert(payload)
+        .select("id");
       error = insertRes.error;
-      if (!error && Array.isArray(insertRes.data) && insertRes.data[0]?.id) {
-        setApplicationId(insertRes.data[0].id as string);
+      if (!error && insertRes.data?.[0]?.id) {
+        const newId = insertRes.data[0].id as string;
+        setApplicationId(newId);
+        applicationIdRef.current = newId;
       }
     }
 
@@ -431,11 +540,39 @@ export default function ScholarshipDetailPage() {
     }
 
     setApplicationStatus("submitted");
-    setMessage("✓ Your application has been submitted successfully. View it under Applications.", "success");
+    setShowApplicationForm(false);
+    setMessage(
+      "✓ Your application has been submitted successfully. View it under Applications.",
+      "success"
+    );
+  };
+
+  const handleConfirmAction = async () => {
+    if (confirmationAction === "delete") {
+      await performDeleteApplication();
+      return;
+    }
+
+    if (confirmationAction === "saveDraft") {
+      setIsConfirmationOpen(false);
+      setConfirmationAction(null);
+      setSubmitting(true);
+      await saveDraftCore({ showMessage: true });
+      setSubmitting(false);
+      return;
+    }
+
+    if (confirmationAction === "submit") {
+      await performSubmitApplication();
+    }
   };
 
   if (loading) {
-    return <p className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">Loading scholarship details…</p>;
+    return (
+      <p className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
+        Loading scholarship details…
+      </p>
+    );
   }
 
   if (!scholarship) {
@@ -445,8 +582,10 @@ export default function ScholarshipDetailPage() {
           <CardTitle>Scholarship not found</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-slate-600">We could not locate that scholarship. Please return to the listings.</p>
-          <Link href={'/scholarships' as any}>
+          <p className="text-sm text-slate-600">
+            We could not locate that scholarship. Please return to the listings.
+          </p>
+          <Link href={"/scholarships" as any}>
             <Button className="mt-4">Back to scholarships</Button>
           </Link>
         </CardContent>
@@ -458,29 +597,81 @@ export default function ScholarshipDetailPage() {
 
   return (
     <div className="space-y-6">
+      <ConfirmationDialog
+        isOpen={isConfirmationOpen}
+        onCancel={() => {
+          setIsConfirmationOpen(false);
+          setConfirmationAction(null);
+        }}
+        onConfirm={handleConfirmAction}
+        title={
+          confirmationAction === "delete"
+            ? "Delete application"
+            : confirmationAction === "saveDraft"
+            ? "Save application draft"
+            : "Submit application"
+        }
+        message={
+          confirmationAction === "delete"
+            ? "Are you sure you want to delete this application? This action cannot be undone."
+            : confirmationAction === "saveDraft"
+            ? "Save this application as a draft? You can continue editing it later from your Applications page."
+            : "Submit your application? Once submitted, you will not be able to edit it. It will appear under your Applications page."
+        }
+        confirmText={
+          confirmationAction === "delete"
+            ? "Delete"
+            : confirmationAction === "saveDraft"
+            ? "Save draft"
+            : "Submit"
+        }
+        cancelText="Cancel"
+        isDangerous={confirmationAction === "delete"}
+        isLoading={submitting}
+      />
+
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{scholarship.title}</h1>
-          <p className="text-sm text-slate-600">Review the details and apply directly from this page.</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+            {scholarship.title}
+          </h1>
+          <p className="text-sm text-slate-600">
+            Review the details and apply directly from this page.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant={isSaved ? "default" : "outline"} size="sm" onClick={toggleSave} disabled={saving}>
+          <Button
+            variant={isSaved ? "default" : "outline"}
+            size="sm"
+            onClick={toggleSave}
+            disabled={saving}
+          >
             {isSaved ? "Saved" : "Save"}
           </Button>
-          <Button size="sm" onClick={handleApply} disabled={isApplied || submitting}>
-            {isApplied ? "Applied" : applicationStatus === "draft" ? "Continue application" : "Apply"}
+          <Button
+            size="sm"
+            onClick={handleApply}
+            disabled={isApplied || submitting || showApplicationForm}
+          >
+            {isApplied
+              ? "Applied"
+              : applicationStatus === "draft"
+              ? "Continue application"
+              : "Apply"}
           </Button>
         </div>
       </div>
 
       {actionMessage ? (
-        <div className={`rounded-xl border p-4 text-sm ${
-          messageType === "error"
-            ? "border-rose-200 bg-rose-50 text-rose-900"
-            : messageType === "success"
-            ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-            : "border-slate-200 bg-slate-50 text-slate-700"
-        }`}>
+        <div
+          className={`rounded-xl border p-4 text-sm ${
+            messageType === "error"
+              ? "border-rose-200 bg-rose-50 text-rose-900"
+              : messageType === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+              : "border-slate-200 bg-slate-50 text-slate-700"
+          }`}
+        >
           {actionMessage}
         </div>
       ) : null}
@@ -494,22 +685,33 @@ export default function ScholarshipDetailPage() {
             <p className="text-sm leading-7 text-slate-700">{scholarship.description}</p>
             <div className="space-y-3 text-sm text-slate-600">
               <div>
-                <span className="font-medium text-slate-900">Amount:</span> ₱{scholarship.amount.toLocaleString()}
+                <span className="font-medium text-slate-900">Amount:</span> ₱
+                {scholarship.amount.toLocaleString()}
               </div>
               {scholarship.deadline ? (
                 <div>
-                  <span className="font-medium text-slate-900">Deadline:</span> {new Date(scholarship.deadline).toLocaleDateString()}
+                  <span className="font-medium text-slate-900">Deadline:</span>{" "}
+                  {new Date(scholarship.deadline).toLocaleDateString()}
                 </div>
               ) : null}
               {scholarship.application_period_start || scholarship.application_period_end ? (
                 <div>
                   <span className="font-medium text-slate-900">Application period:</span>{" "}
-                  {scholarship.application_period_start ? new Date(scholarship.application_period_start).toLocaleDateString() : "—"} until {scholarship.application_period_end ? new Date(scholarship.application_period_end).toLocaleDateString() : "—"}
+                  {scholarship.application_period_start
+                    ? new Date(scholarship.application_period_start).toLocaleDateString()
+                    : "—"}{" "}
+                  until{" "}
+                  {scholarship.application_period_end
+                    ? new Date(scholarship.application_period_end).toLocaleDateString()
+                    : "—"}
                 </div>
               ) : null}
               {scholarship.exam_required ? (
                 <div>
-                  <span className="font-medium text-slate-900">Exam required:</span> Yes{scholarship.exam_date ? ` (on ${new Date(scholarship.exam_date).toLocaleDateString()})` : ""}
+                  <span className="font-medium text-slate-900">Exam required:</span> Yes
+                  {scholarship.exam_date
+                    ? ` (on ${new Date(scholarship.exam_date).toLocaleDateString()})`
+                    : ""}
                 </div>
               ) : (
                 <div>
@@ -535,7 +737,8 @@ export default function ScholarshipDetailPage() {
               ))}
             </ul>
             <p className="mt-4 rounded-2xl bg-blue-50 p-3 text-blue-900">
-              <span className="font-medium">Ready to apply?</span> Click the Apply button above to start your application.
+              <span className="font-medium">Ready to apply?</span> Click the Apply button above to
+              start your application.
             </p>
           </CardContent>
         </Card>
@@ -546,14 +749,22 @@ export default function ScholarshipDetailPage() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>{applicationStatus === "draft" ? "Continue application" : "Start application"}</CardTitle>
-                <p className="mt-1 text-sm text-slate-600">Complete all sections before submitting</p>
+                <CardTitle>
+                  {applicationStatus === "draft" ? "Continue application" : "Start application"}
+                </CardTitle>
+                <p className="mt-1 text-sm text-slate-600">
+                  Complete all sections before submitting
+                </p>
               </div>
               {applicationStatus === "draft" && (
                 <Button
                   size="sm"
-                  variant="destructive"
-                  onClick={handleDeleteApplication}
+                  variant="outline"
+                  className="border-rose-300 text-rose-700 hover:bg-rose-50"
+                  onClick={() => {
+                    setConfirmationAction("delete");
+                    setIsConfirmationOpen(true);
+                  }}
                   disabled={submitting}
                 >
                   Delete Draft
@@ -565,11 +776,15 @@ export default function ScholarshipDetailPage() {
             {/* Step 1: Applicant Information */}
             <div className="space-y-4 border-b border-slate-200 pb-8">
               <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">1</span>
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">
+                  1
+                </span>
                 <h3 className="text-base font-semibold text-slate-900">Your Information</h3>
               </div>
-              <p className="text-sm text-slate-600">Complete your personal details so we can process your application.</p>
-              
+              <p className="text-sm text-slate-600">
+                Complete your personal details so we can process your application.
+              </p>
+
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="fullName">Full name *</Label>
@@ -621,21 +836,32 @@ export default function ScholarshipDetailPage() {
             {/* Step 2: Requirements & Documents */}
             <div className="space-y-4 border-b border-slate-200 pb-8">
               <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">2</span>
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">
+                  2
+                </span>
                 <h3 className="text-base font-semibold text-slate-900">Requirements Checklist</h3>
               </div>
-              <p className="text-sm text-slate-600">Upload documents and check off each requirement as you complete it.</p>
-              
+              <p className="text-sm text-slate-600">
+                Upload documents and check off each requirement as you complete it.
+              </p>
+
               <div className="space-y-3">
                 {REQUIRED_FIELDS.map((item) => {
-                  const filesForRequirement = uploadedFiles.filter(f => f.requirementKey === item.key);
+                  const filesForRequirement = uploadedFiles.filter(
+                    (f) => f.requirementKey === item.key
+                  );
                   return (
-                    <div key={item.key} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div
+                      key={item.key}
+                      className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
+                    >
                       <div className="mb-3 flex items-start gap-3">
                         <input
                           type="checkbox"
                           id={item.key}
-                          checked={requirementChecks[item.key as keyof typeof requirementChecks]}
+                          checked={
+                            requirementChecks[item.key as keyof typeof requirementChecks]
+                          }
                           onChange={() =>
                             setRequirementChecks((current) => ({
                               ...current,
@@ -651,7 +877,7 @@ export default function ScholarshipDetailPage() {
                           <span className="text-sm font-medium text-emerald-600">✓ Completed</span>
                         )}
                       </div>
-                      
+
                       <div className="space-y-2 pl-7">
                         <label className="block">
                           <input
@@ -662,14 +888,19 @@ export default function ScholarshipDetailPage() {
                             className="block w-full text-sm text-slate-500 file:mr-3 file:rounded-lg file:border-0 file:bg-brand file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-blue-600"
                           />
                         </label>
-                        
+
                         {filesForRequirement.length > 0 && (
                           <div className="space-y-1">
-                            {filesForRequirement.map((file, idx) => (
-                              <div key={idx} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs">
+                            {filesForRequirement.map((file) => (
+                              <div
+                                key={file.storagePath}
+                                className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs"
+                              >
                                 <span className="truncate text-slate-700">{file.name}</span>
                                 <button
-                                  onClick={() => removeUploadedFile(uploadedFiles.indexOf(file))}
+                                  onClick={() =>
+                                    removeUploadedFile(uploadedFiles.indexOf(file))
+                                  }
                                   className="ml-2 text-slate-400 hover:text-rose-600"
                                 >
                                   ✕
@@ -688,12 +919,16 @@ export default function ScholarshipDetailPage() {
             {/* Step 3: Additional Information */}
             <div className="space-y-4 border-b border-slate-200 pb-8">
               <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">3</span>
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">
+                  3
+                </span>
                 <h3 className="text-base font-semibold text-slate-900">Additional Notes</h3>
               </div>
-              
+
               <div className="space-y-2">
-                <Label htmlFor="applicationNotes">Any additional information? (optional)</Label>
+                <Label htmlFor="applicationNotes">
+                  Any additional information? (optional)
+                </Label>
                 <textarea
                   id="applicationNotes"
                   value={applicationNotes}
@@ -709,26 +944,32 @@ export default function ScholarshipDetailPage() {
               <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm">
                 <p className="font-medium text-blue-900">Info Status</p>
                 <p className="mt-1 text-blue-700">
-                  {applicantFullName && applicantEmail && applicantPhone && applicantAddress ? "✓ Complete" : "Incomplete"}
+                  {applicantFullName && applicantEmail && applicantPhone && applicantAddress
+                    ? "✓ Complete"
+                    : "Incomplete"}
                 </p>
               </div>
               <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm">
                 <p className="font-medium text-blue-900">Requirements</p>
                 <p className="mt-1 text-blue-700">
-                  {Object.values(requirementChecks).filter(Boolean).length} of {REQUIRED_FIELDS.length} completed
+                  {Object.values(requirementChecks).filter(Boolean).length} of{" "}
+                  {REQUIRED_FIELDS.length} completed
                 </p>
               </div>
               <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm">
                 <p className="font-medium text-blue-900">Documents</p>
-                <p className="mt-1 text-blue-700">
-                  {uploadedFiles.length} file(s) uploaded
-                </p>
+                <p className="mt-1 text-blue-700">{uploadedFiles.length} file(s) uploaded</p>
               </div>
             </div>
 
             {/* Action Buttons */}
             <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-6">
-              <Button size="sm" variant="outline" onClick={handleSaveDraft} disabled={submitting || saving}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSaveDraft}
+                disabled={submitting || saving}
+              >
                 Save as draft
               </Button>
               <Button
@@ -737,7 +978,7 @@ export default function ScholarshipDetailPage() {
                 disabled={submitting || saving}
                 className={Object.values(requirementChecks).every(Boolean) ? "" : "opacity-60"}
               >
-                {applicationStatus === "draft" ? "Submit application" : "Submit application"}
+                Submit application
               </Button>
             </div>
           </CardContent>

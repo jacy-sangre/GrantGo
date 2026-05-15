@@ -7,7 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type Profile = {
-  full_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
   email: string | null;
   role: string | null;
   institution: string | null;
@@ -31,7 +32,11 @@ export default function ProfilePage() {
       }
 
       const userId = sessionData.session.user.id;
-      const { data } = await supabase.from("profiles").select("full_name, email, role, institution, region_id").eq("id", userId).single();
+      const { data } = await supabase
+        .from("profiles")
+        .select("first_name, last_name, email, role, institution, region_id")
+        .eq("id", userId)
+        .single();
       setProfile(data ?? null);
 
       if (data?.region_id) {
@@ -45,6 +50,16 @@ export default function ProfilePage() {
     loadProfile();
   }, [router]);
 
+  const getFullName = () => {
+    if (profile?.first_name && profile?.last_name) {
+      return `${profile.first_name} ${profile.last_name}`;
+    }
+    if (profile?.first_name) {
+      return profile.first_name;
+    }
+    return "Your profile";
+  };
+
   if (loading) {
     return <div className="mx-auto max-w-6xl px-4 py-16 text-center text-slate-600">Loading profile...</div>;
   }
@@ -55,13 +70,16 @@ export default function ProfilePage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.2em] text-brand">Profile</p>
-            <h1 className="mt-2 text-3xl font-semibold text-slate-900">{profile?.full_name || "Your profile"}</h1>
+            <h1 className="mt-2 text-3xl font-semibold text-slate-900">{getFullName()}</h1>
             <p className="mt-3 max-w-2xl text-sm text-slate-600">
               Manage your account details, region preference, and secure access to GrantGo.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <a href="/profile/edit" className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-100">
+            <a
+              href="/profile/edit"
+              className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-900 transition hover:bg-slate-100"
+            >
               Edit profile
             </a>
             <LogoutButton />
@@ -76,8 +94,12 @@ export default function ProfilePage() {
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-slate-700">
             <div className="space-y-1">
-              <p className="font-medium text-slate-900">Name</p>
-              <p>{profile?.full_name ?? "Not set"}</p>
+              <p className="font-medium text-slate-900">First Name</p>
+              <p>{profile?.first_name ?? "Not set"}</p>
+            </div>
+            <div className="space-y-1">
+              <p className="font-medium text-slate-900">Last Name</p>
+              <p>{profile?.last_name ?? "Not set"}</p>
             </div>
             <div className="space-y-1">
               <p className="font-medium text-slate-900">Email</p>
@@ -89,7 +111,7 @@ export default function ProfilePage() {
             </div>
             <div className="space-y-1">
               <p className="font-medium text-slate-900">Role</p>
-              <p>{profile?.role ?? "student"}</p>
+              <p>{profile?.role ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1) : "Student"}</p>
             </div>
             <div className="space-y-1">
               <p className="font-medium text-slate-900">Home region</p>

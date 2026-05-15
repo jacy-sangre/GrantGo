@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, ExternalLink } from "lucide-react";
+import { Download, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
+import { NotificationModal } from "@/components/ui/notification-modal";
 import { createClient } from "@/lib/supabase/client";
 
 type ApplicationRecord = {
@@ -37,8 +39,20 @@ export default function AdminApplicationsPage() {
   const router = useRouter();
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [notification, setNotification] = useState<{
+    isOpen: boolean;
+    type: "success" | "error" | "info";
+    title: string;
+    message: string;
+  }>({
+    isOpen: false,
+    type: "info",
+    title: "",
+    message: ""
+  });
   const supabase = createClient();
 
   useEffect(() => {
@@ -73,7 +87,12 @@ export default function AdminApplicationsPage() {
 
       if (!mounted) return;
       if (error) {
-        setMessage("Unable to load applications.");
+        setNotification({
+          isOpen: true,
+          type: "error",
+          title: "Error",
+          message: "Unable to load applications."
+        });
       } else {
         setApplications((data ?? []) as ApplicationRecord[]);
       }
@@ -91,7 +110,12 @@ export default function AdminApplicationsPage() {
       const { data, error } = await supabase.storage.from("application-documents").download(storagePath);
 
       if (error) {
-        setMessage("Failed to download file.");
+        setNotification({
+          isOpen: true,
+          type: "error",
+          title: "Download Error",
+          message: "Failed to download file."
+        });
         return;
       }
 
@@ -104,7 +128,12 @@ export default function AdminApplicationsPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setMessage("Error downloading file.");
+      setNotification({
+        isOpen: true,
+        type: "error",
+        title: "Error",
+        message: "Error downloading file."
+      });
     }
   };
 
@@ -112,12 +141,54 @@ export default function AdminApplicationsPage() {
     const { error } = await supabase.from("applications").update({ status: newStatus }).eq("id", applicationId);
 
     if (error) {
-      setMessage("Unable to update application status.");
+      setNotification({
+        isOpen: true,
+        type: "error",
+        title: "Update Failed",
+        message: "Unable to update application status."
+      });
     } else {
       setApplications((prev) =>
         prev.map((app) => (app.id === applicationId ? { ...app, status: newStatus } : app))
       );
-      setMessage(`Application status updated to ${newStatus}.`);
+      setNotification({
+        isOpen: true,
+        type: "success",
+        title: "Success",
+        message: `Application status updated to ${newStatus}.`
+      });
+    }
+  };
+
+  const deleteApplication = async () => {
+    if (!deleteConfirmId) return;
+
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from("applications")
+        .delete()
+        .eq("id", deleteConfirmId);
+
+      if (error) {
+        setNotification({
+          isOpen: true,
+          type: "error",
+          title: "Delete Failed",
+          message: "Unable to delete application."
+        });
+      } else {
+        setApplications((prev) => prev.filter((app) => app.id !== deleteConfirmId));
+        setNotification({
+          isOpen: true,
+          type: "success",
+          title: "Success",
+          message: "Application deleted successfully."
+        });
+      }
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirmId(null);
     }
   };
 
@@ -138,11 +209,27 @@ export default function AdminApplicationsPage() {
         </p>
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-          {message}
-        </div>
-      )}
+      <ConfirmationDialog
+        isOpen={!!deleteConfirmId}
+        onConfirm={deleteApplication}
+        onCancel={() => setDeleteConfirmId(null)}
+        title="Delete Application"
+        message="Are you sure you want to delete this application? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        isDangerous={true}
+        isLoading={isDeleting}
+      />
+
+      <NotificationModal
+        isOpen={notification.isOpen}
+        onClose={() => setNotification({ ...notification, isOpen: false })}
+        type={notification.type}
+        title={notification.title}
+        message={notification.message}
+        autoClose={true}
+        autoCloseDelay={3000}
+      />
 
       <div className="flex gap-2">
         {["all", "submitted", "draft"].map((status) => (
@@ -284,6 +371,19 @@ export default function AdminApplicationsPage() {
                     </Button>
                   </div>
                 )}
+
+                {/* Delete Action */}
+                <div className="flex gap-2 border-t border-slate-200 pt-4">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={() => setDeleteConfirmId(application.id)}
+                  >
+                    <Trash2 size={16} className="mr-2" />
+                    Delete Application
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}

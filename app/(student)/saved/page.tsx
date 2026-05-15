@@ -24,6 +24,12 @@ export default function SavedGrantsPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 4;
+  const totalPages = Math.ceil(savedScholarships.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedSavedScholarships = savedScholarships.slice(startIndex, endIndex);
   const supabase = createClient();
 
   useEffect(() => {
@@ -105,35 +111,81 @@ export default function SavedGrantsPage() {
           You don't have any saved scholarships yet. Add favorites from the scholarship browse page.
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          {savedScholarships.map((item) => {
-            const scholarship = Array.isArray(item.scholarships) ? item.scholarships[0] : item.scholarships;
-            return (
-              <Card key={item.scholarship_id}>
-                <CardHeader>
-                  <CardTitle>{scholarship?.title ?? "Unknown scholarship"}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-slate-600 line-clamp-3">{scholarship?.description ?? "Scholarship details are unavailable."}</p>
-                  <div className="grid gap-2 text-sm text-slate-500">
-                    <span>Amount: ₱{scholarship?.amount.toLocaleString() ?? "—"}</span>
-                    {scholarship?.deadline ? <span>Deadline: {new Date(scholarship.deadline).toLocaleDateString()}</span> : null}
-                    <span>Saved: {new Date(item.created_at).toLocaleDateString()}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {scholarship?.id ? (
-                      <Link href={`/scholarships/${scholarship.id}` as any}>
-                        <Button size="sm">View details</Button>
-                      </Link>
-                    ) : null}
-                    <Button size="sm" variant="outline" onClick={() => removeBookmark(item.scholarship_id)} disabled={removingId === item.scholarship_id}>
-                      {scholarship ? <Star size={16} className="mr-2 text-amber-500" /> : <StarOff size={16} className="mr-2" />} Remove
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-2">
+            {paginatedSavedScholarships.map((item) => {
+              const scholarship = Array.isArray(item.scholarships) ? item.scholarships[0] : item.scholarships;
+              return (
+                <Card key={item.scholarship_id}>
+                  <CardHeader>
+                    <CardTitle>{scholarship?.title ?? "Unknown scholarship"}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-sm text-slate-600 line-clamp-3">{scholarship?.description ?? "Scholarship details are unavailable."}</p>
+                    <div className="grid gap-2 text-sm text-slate-500">
+                      <span>Amount: ₱{scholarship?.amount.toLocaleString() ?? "—"}</span>
+                      {scholarship?.deadline ? <span>Deadline: {new Date(scholarship.deadline).toLocaleDateString()}</span> : null}
+                      <span>Saved: {new Date(item.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {scholarship?.id ? (
+                        <Link href={`/scholarships/${scholarship.id}` as any}>
+                          <Button size="sm">View details</Button>
+                        </Link>
+                      ) : null}
+                      <Button size="sm" variant="outline" onClick={() => removeBookmark(item.scholarship_id)} disabled={removingId === item.scholarship_id}>
+                        {scholarship ? <Star size={16} className="mr-2 text-amber-500" /> : <StarOff size={16} className="mr-2" />} Remove
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-6 border-t border-slate-200">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCurrentPage((prev) => Math.max(prev - 1, 1));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <div className="flex gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <Button
+                    key={page}
+                    variant={currentPage === page ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setCurrentPage(page);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                  >
+                    {page}
+                  </Button>
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+              <span className="ml-4 text-sm text-slate-600">
+                Page {currentPage} of {totalPages} ({savedScholarships.length} saved scholarships)
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

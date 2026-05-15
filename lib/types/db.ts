@@ -1,6 +1,18 @@
 export type AppRole = "admin" | "student";
 export type ScholarshipStatus = "active" | "draft";
 
+export interface Profile {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  institution: string | null;
+  region_id: string | null;
+  role: AppRole;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Provider {
   id: string;
   name: string;

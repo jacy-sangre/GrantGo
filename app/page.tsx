@@ -154,7 +154,7 @@ export default async function Page() {
               <h2 className="text-4xl sm:text-5xl font-bold mb-2">Latest Opportunities</h2>
               <p className="text-lg text-slate-600">Recent scholarships you might love</p>
             </div>
-            <Link href="/dashboard" className="hidden sm:inline-flex items-center gap-2 text-neon-pink font-semibold hover:gap-4 transition-all">
+            <Link href="/scholarships" className="hidden sm:inline-flex items-center gap-2 text-neon-pink font-semibold hover:gap-4 transition-all">
               View all <ArrowRight size={20} />
             </Link>
           </div>
@@ -195,7 +195,7 @@ export default async function Page() {
           )}
 
           <div className="sm:hidden flex justify-center mt-8">
-            <Link href="/dashboard" className="inline-flex items-center gap-2 text-neon-pink font-semibold bg-gradient-to-r from-neon-pink/10 to-neon-purple/10 px-6 py-3 rounded-xl hover:from-neon-pink/20 hover:to-neon-purple/20 transition-all">
+            <Link href="/scholarships" className="inline-flex items-center gap-2 text-neon-pink font-semibold bg-gradient-to-r from-neon-pink/10 to-neon-purple/10 px-6 py-3 rounded-xl hover:from-neon-pink/20 hover:to-neon-purple/20 transition-all">
               View All Scholarships <ArrowRight size={20} />
             </Link>
           </div>

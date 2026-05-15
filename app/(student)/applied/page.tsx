@@ -24,6 +24,12 @@ export default function AppliedScholarshipsPage() {
   const [applications, setApplications] = useState<AppliedScholarship[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 4;
+  const totalPages = Math.ceil(applications.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedApplications = applications.slice(startIndex, endIndex);
   const supabase = createClient();
 
   useEffect(() => {
@@ -83,34 +89,80 @@ export default function AppliedScholarshipsPage() {
           You haven't applied to any scholarships yet. Save or apply to grants from the scholarship list.
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          {applications.map((application) => {
-            const relation = (application as any).scholarship ?? (application as any).scholarships;
-            const scholarship = Array.isArray(relation) ? relation[0] : relation;
-            const scholarshipId = scholarship?.id ?? application.scholarship_id;
-            const isDraft = application.status === "draft";
-            return (
-              <Card key={application.id}>
-                <CardHeader>
-                  <CardTitle>{scholarship?.title ?? "Unknown scholarship"}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-slate-600 line-clamp-3">{scholarship?.description ?? "Scholarship details not available."}</p>
-                  <div className="grid gap-2 text-sm text-slate-500">
-                    <span>Amount: ₱{scholarship?.amount.toLocaleString() ?? "—"}</span>
-                    {scholarship?.deadline ? <span>Deadline: {new Date(scholarship.deadline).toLocaleDateString()}</span> : null}
-                    <span>Status: {isDraft ? "Draft" : application.status}</span>
-                    <span>Applied: {new Date(application.applied_at).toLocaleDateString()}</span>
-                  </div>
-                  {scholarshipId ? (
-                    <Link href={`/scholarships/${scholarshipId}` as any}>
-                      <Button size="sm">{isDraft ? "Continue application" : "View scholarship"}</Button>
-                    </Link>
-                  ) : null}
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-2">
+            {paginatedApplications.map((application) => {
+              const relation = (application as any).scholarship ?? (application as any).scholarships;
+              const scholarship = Array.isArray(relation) ? relation[0] : relation;
+              const scholarshipId = scholarship?.id ?? application.scholarship_id;
+              const isDraft = application.status === "draft";
+              return (
+                <Card key={application.id}>
+                  <CardHeader>
+                    <CardTitle>{scholarship?.title ?? "Unknown scholarship"}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-sm text-slate-600 line-clamp-3">{scholarship?.description ?? "Scholarship details not available."}</p>
+                    <div className="grid gap-2 text-sm text-slate-500">
+                      <span>Amount: ₱{scholarship?.amount.toLocaleString() ?? "—"}</span>
+                      {scholarship?.deadline ? <span>Deadline: {new Date(scholarship.deadline).toLocaleDateString()}</span> : null}
+                      <span>Status: {isDraft ? "Draft" : application.status}</span>
+                      <span>Applied: {new Date(application.applied_at).toLocaleDateString()}</span>
+                    </div>
+                    {scholarshipId ? (
+                      <Link href={`/scholarships/${scholarshipId}` as any}>
+                        <Button size="sm">{isDraft ? "Continue application" : "View scholarship"}</Button>
+                      </Link>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-6 border-t border-slate-200">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCurrentPage((prev) => Math.max(prev - 1, 1));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              <div className="flex gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <Button
+                    key={page}
+                    variant={currentPage === page ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setCurrentPage(page);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                  >
+                    {page}
+                  </Button>
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCurrentPage((prev) => Math.min(prev + 1, totalPages));
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+              <span className="ml-4 text-sm text-slate-600">
+                Page {currentPage} of {totalPages} ({applications.length} applications)
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

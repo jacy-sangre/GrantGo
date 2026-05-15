@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
+import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,13 +16,17 @@ import { schoolSuggestions } from "@/lib/data/school-suggestions";
 import { type UpdateProfileValues, updateProfileSchema } from "@/lib/validations/auth";
 
 export default function EditProfilePage() {
+  
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [email, setEmail] = useState("");
   const [regions, setRegions] = useState<Region[]>([]);
+  const [isConfirmationOpen, setIsConfirmationOpen] = useState(false);
+  const [pendingValues, setPendingValues] = useState<UpdateProfileValues | null>(null);
+  const router = useRouter();
   const form = useForm<UpdateProfileValues>({
     resolver: zodResolver(updateProfileSchema),
-    defaultValues: { full_name: "", institution: "", region_id: "" }
+    defaultValues: { first_name: "", last_name: "", institution: "", region_id: "" }
   });
 
   useEffect(() => {
@@ -36,7 +42,11 @@ export default function EditProfilePage() {
       const userId = sessionData.session.user.id;
       const [regionsRes, profileRes] = await Promise.all([
         supabase.from("regions").select("id,region_name").order("region_name"),
-        supabase.from("profiles").select("full_name, email, institution, region_id").eq("id", userId).single()
+        supabase
+          .from("profiles")
+          .select("first_name, last_name, email, institution, region_id")
+          .eq("id", userId)
+          .single()
       ]);
 
       if (!regionsRes.error && regionsRes.data) {
@@ -46,7 +56,8 @@ export default function EditProfilePage() {
       if (profileRes.data) {
         setEmail(profileRes.data.email ?? "");
         form.reset({
-          full_name: profileRes.data.full_name ?? "",
+          first_name: profileRes.data.first_name ?? "",
+          last_name: profileRes.data.last_name ?? "",
           institution: profileRes.data.institution ?? "",
           region_id: profileRes.data.region_id ?? ""
         });
@@ -59,9 +70,20 @@ export default function EditProfilePage() {
   }, [form]);
 
   const onSubmit = form.handleSubmit(async (values) => {
-    const supabase = createClient();
-    setSaving(true);
+    setPendingValues(values);
+    setIsConfirmationOpen(true);
+  });
 
+  const handleConfirmProfileSave = async () => {
+    if (!pendingValues) {
+      setIsConfirmationOpen(false);
+      return;
+    }
+
+    setSaving(true);
+    setIsConfirmationOpen(false);
+
+    const supabase = createClient();
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData?.session) {
       window.location.href = "/login";
@@ -72,13 +94,15 @@ export default function EditProfilePage() {
     const { error } = await supabase
       .from("profiles")
       .update({
-        full_name: values.full_name,
-        institution: values.institution,
-        region_id: values.region_id
+        first_name: pendingValues.first_name.trim(),
+        last_name: pendingValues.last_name.trim(),
+        institution: pendingValues.institution,
+        region_id: pendingValues.region_id
       })
       .eq("id", userId);
 
     setSaving(false);
+    setPendingValues(null);
 
     if (error) {
       toast.error(error.message);
@@ -86,7 +110,8 @@ export default function EditProfilePage() {
     }
 
     toast.success("Profile updated successfully.");
-  });
+    router.push("/profile");
+  };
 
   if (loading) {
     return <div className="mx-auto max-w-3xl px-4 py-16 text-center text-slate-600">Loading profile editor…</div>;
@@ -94,6 +119,17 @@ export default function EditProfilePage() {
 
   return (
     <main className="mx-auto max-w-3xl px-0 py-10">
+      <ConfirmationDialog
+        isOpen={isConfirmationOpen}
+        onCancel={() => setIsConfirmationOpen(false)}
+        onConfirm={handleConfirmProfileSave}
+        title="Save profile changes"
+        message="Do you want to save the changes to your profile?"
+        confirmText="Save"
+        cancelText="Cancel"
+        isDangerous={false}
+        isLoading={saving}
+      />
       <Card>
         <CardHeader>
           <CardTitle>Update profile</CardTitle>
@@ -101,8 +137,18 @@ export default function EditProfilePage() {
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>
             <div className="space-y-2">
-              <Label htmlFor="full_name">Full Name</Label>
-              <Input id="full_name" {...form.register("full_name")} />
+              <Label htmlFor="first_name">First Name</Label>
+              <Input id="first_name" {...form.register("first_name")} disabled={saving} />
+              {form.formState.errors.first_name && (
+                <p className="text-sm text-red-500">{form.formState.errors.first_name.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="last_name">Last Name</Label>
+              <Input id="last_name" {...form.register("last_name")} disabled={saving} />
+              {form.formState.errors.last_name && (
+                <p className="text-sm text-red-500">{form.formState.errors.last_name.message}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -114,19 +160,24 @@ export default function EditProfilePage() {
                 id="institution"
                 list="school-suggestions"
                 {...form.register("institution")}
+                disabled={saving}
               />
               <datalist id="school-suggestions">
                 {schoolSuggestions.map((school) => (
                   <option key={school} value={school} />
                 ))}
               </datalist>
+              {form.formState.errors.institution && (
+                <p className="text-sm text-red-500">{form.formState.errors.institution.message}</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="region_id">Home Region</Label>
               <select
                 id="region_id"
-                className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand disabled:opacity-50 disabled:cursor-not-allowed"
                 {...form.register("region_id")}
+                disabled={saving}
               >
                 <option value="">Select your region</option>
                 {regions.map((region) => (
@@ -135,6 +186,9 @@ export default function EditProfilePage() {
                   </option>
                 ))}
               </select>
+              {form.formState.errors.region_id && (
+                <p className="text-sm text-red-500">{form.formState.errors.region_id.message}</p>
+              )}
             </div>
             <Button type="submit" disabled={saving} className="w-full">
               {saving ? "Saving…" : "Save profile"}

@@ -24,7 +24,14 @@ export default function ScholarshipsPage() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const supabase = createClient();
+  
+  const itemsPerPage = 6;
+  const totalPages = Math.ceil(scholarships.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedScholarships = scholarships.slice(startIndex, endIndex);
 
   useEffect(() => {
     let mounted = true;
@@ -131,42 +138,96 @@ export default function ScholarshipsPage() {
           No active scholarships are available right now. Check back later.
         </div>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2">
-          {scholarships.map((scholarship) => {
-            const isSaved = savedScholarships.includes(scholarship.id);
-            return (
-              <Card key={scholarship.id}>
-                <CardHeader>
-                  <CardTitle>{scholarship.title}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-slate-600 line-clamp-3">{scholarship.description}</p>
-                  <div className="flex flex-wrap gap-2 text-sm text-slate-500">
-                    <span>Amount: ₱{scholarship.amount.toLocaleString()}</span>
-                    {scholarship.deadline ? <span>Deadline: {new Date(scholarship.deadline).toLocaleDateString()}</span> : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link href={`/scholarships/${scholarship.id}` as any}>
-                      <Button size="sm">View details</Button>
-                    </Link>
-                    <Button size="sm" variant={isSaved ? "default" : "outline"} onClick={() => toggleSave(scholarship.id)} disabled={savingId === scholarship.id}>
-                      {isSaved ? (
-                        <>
-                          <Star size={16} className="mr-2 text-amber-500" />
-                          Saved
-                        </>
-                      ) : (
-                        <>
-                          <StarOff size={16} className="mr-2" />
-                          Save
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <div className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {paginatedScholarships.map((scholarship) => {
+              const isSaved = savedScholarships.includes(scholarship.id);
+              return (
+                <Card key={scholarship.id}>
+                  <CardHeader>
+                    <CardTitle>{scholarship.title}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-sm text-slate-600 line-clamp-3">{scholarship.description}</p>
+                    <div className="flex flex-wrap gap-2 text-sm text-slate-500">
+                      <span>Amount: ₱{scholarship.amount.toLocaleString()}</span>
+                      {scholarship.deadline ? <span>Deadline: {new Date(scholarship.deadline).toLocaleDateString()}</span> : null}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={`/scholarships/${scholarship.id}` as any}>
+                        <Button size="sm">View details</Button>
+                      </Link>
+                      <Link href={`/scholarships/${scholarship.id}` as any}>
+                        <Button size="sm" variant="outline">Apply</Button>
+                      </Link>
+                      <Button size="sm" variant={isSaved ? "default" : "outline"} onClick={() => toggleSave(scholarship.id)} disabled={savingId === scholarship.id}>
+                        {isSaved ? (
+                          <>
+                            <Star size={16} className="mr-2 text-amber-500" />
+                            Saved
+                          </>
+                        ) : (
+                          <>
+                            <StarOff size={16} className="mr-2" />
+                            Save
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-6 border-t border-slate-200">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCurrentPage(prev => Math.max(prev - 1, 1));
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                disabled={currentPage === 1}
+              >
+                Previous
+              </Button>
+              
+              <div className="flex gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                  <Button
+                    key={page}
+                    variant={currentPage === page ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setCurrentPage(page);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  >
+                    {page}
+                  </Button>
+                ))}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setCurrentPage(prev => Math.min(prev + 1, totalPages));
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                disabled={currentPage === totalPages}
+              >
+                Next
+              </Button>
+
+              <span className="ml-4 text-sm text-slate-600">
+                Page {currentPage} of {totalPages} ({scholarships.length} scholarships)
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

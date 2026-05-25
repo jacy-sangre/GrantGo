@@ -47,8 +47,11 @@ export default function ScholarshipDetailPage() {
   const router = useRouter();
   const [scholarship, setScholarship] = useState<ScholarshipDetail | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  // Tracks the Supabase application record for an existing draft or submitted application.
   const [applicationId, setApplicationId] = useState<string | null>(null);
+  // 'draft' means the user has saved a draft; 'submitted' means the application is complete.
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
+  // Controls whether the application form is shown on the scholarship details page.
   const [showApplicationForm, setShowApplicationForm] = useState(false);
   const [requirementChecks, setRequirementChecks] = useState(defaultRequirementState);
   const [applicationNotes, setApplicationNotes] = useState("");
@@ -126,6 +129,8 @@ export default function ScholarshipDetailPage() {
       setIsSaved(!!bookmarkRes.data);
 
       if (applicationRes.data) {
+        // Existing application record found for this user and scholarship.
+        // If it's a draft, we load the draft state into the form for continuation.
         const appId = applicationRes.data.id;
         setApplicationId(appId);
         applicationIdRef.current = appId;
@@ -229,6 +234,8 @@ export default function ScholarshipDetailPage() {
    * Core save function. Returns the applicationId (new or existing) on success, null on error.
    * Uses a ref-lock to prevent concurrent duplicate inserts.
    */
+  // Core draft save function used by both manual Save and autosave.
+  // This writes a 'draft' application record to Supabase and returns the application id.
   const saveDraftCore = async (
     opts: {
       showMessage?: boolean;
@@ -459,11 +466,13 @@ export default function ScholarshipDetailPage() {
     }
   };
 
+  // When the user clicks Save as draft, show confirmation and then call saveDraftCore.
   const handleSaveDraft = () => {
     setConfirmationAction("saveDraft");
     setIsConfirmationOpen(true);
   };
 
+  // When the user clicks Submit application, confirm and then move to submitted state.
   const handleSubmitApplication = () => {
     setConfirmationAction("submit");
     setIsConfirmationOpen(true);
